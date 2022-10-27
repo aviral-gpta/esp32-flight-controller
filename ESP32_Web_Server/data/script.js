@@ -44,7 +44,7 @@ function onStop(element) {
 function updateSlider(element, sliderNumber) {
     var sliderValue = document.getElementById(element.id).value;
     document.getElementById(element.id + "Value").innerHTML = sliderValue;
-    console.log(sliderValue);
+    console.log("update_c="+configMenu+"s="+sliderNumber+"v="+sliderValue.toString());
     websocket.send("update_c="+configMenu+"s="+sliderNumber+"v="+sliderValue.toString());
 }
 

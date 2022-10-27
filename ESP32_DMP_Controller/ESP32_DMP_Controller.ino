@@ -119,6 +119,7 @@ String createJSONPacket(int ind){
   sliderValuesJSON["sliderThrust"] = String(thrust);
 
   String jsonString = JSON.stringify(sliderValuesJSON);
+  Serial.println(jsonString);
   return jsonString;
 }
 
@@ -136,7 +137,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
     else if (message.indexOf("update") == 0) {
       int c = message.charAt(9) - '1';
       int s = message.charAt(12) - '1';
-      float v = message.substring(4).toFloat();
+      float v = message.substring(15).toFloat();
       if (s <= 2)
         control_coeff[c][s] = v;
       else if (s == 3)
