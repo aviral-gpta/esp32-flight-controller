@@ -1,14 +1,3 @@
-/* 
-  Rui Santos
-  Complete project details at https://RandomNerdTutorials.com/esp32-web-server-websocket-sliders/
-  
-  Permission is hereby granted, free of charge, to any person obtaining a copy
-  of this software and associated documentation files.
-  
-  The above copyright notice and this permission notice shall be included in all
-  copies or substantial portions of the Software.
-*/
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -16,24 +5,20 @@
 #include "SPIFFS.h"
 #include <Arduino_JSON.h>
 
-// Replace with your network credentials
 const char* ssid = "Galaxy M52 5G";
 const char* password = "euvq9457";
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 // Create a WebSocket object
+AsyncWebSocket ws("/ws");
 
-// Set your Static IP address
-IPAddress local_IP(192, 168, 1, 184);
-// Set your Gateway IP address
+IPAddress local_IP(192, 168, 98, 101);
 IPAddress gateway(192, 168, 1, 1);
 
 IPAddress subnet(255, 255, 0, 0);
-IPAddress primaryDNS(8, 8, 8, 8);   //optional
-IPAddress secondaryDNS(8, 8, 4, 4); //optional
-
-AsyncWebSocket ws("/ws");
+// IPAddress primaryDNS(8, 8, 8, 8);   //optional
+// IPAddress secondaryDNS(8, 8, 4, 4); //optional
 
 String message = "";
 float sliderValues[3][3] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -43,7 +28,7 @@ int max_thrust = 1000;
 JSONVar sliderValuesJSON;
 
 //Get Slider Values
-String getSliderValues(int ind){
+String createJSONPacket(int ind){
   sliderValuesJSON["sliderValue1"] = String(sliderValues[ind][0]);
   sliderValuesJSON["sliderValue2"] = String(sliderValues[ind][1]);
   sliderValuesJSON["sliderValue3"] = String(sliderValues[ind][2]);
@@ -66,14 +51,14 @@ void initFS() {
 // Initialize WiFi
 void initWiFi() {
   WiFi.mode(WIFI_STA);
-//  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
-//    Serial.println("STA Failed to configure");
-//  }  
+  if (!WiFi.config(local_IP, gateway, subnet)) {
+    Serial.println("STA Failed to configure");
+  }  
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi ..");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print('.');
-    delay(1000);
+    delay(500);
   }
   Serial.println(WiFi.localIP());
 }
@@ -83,6 +68,7 @@ void notifyClients(String sliderValues) {
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+  Serial.print("Start: ");
   Serial.println(millis());
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
@@ -94,21 +80,23 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
       int s = message.charAt(2) - '1';
       Serial.println(String(c)+"/"+String(s));
       sliderValues[c][s] = message.substring(4).toFloat();
-      Serial.println(getSliderValues(c));
-      notifyClients(getSliderValues(c));
+      Serial.println(createJSONPacket(c));
+      notifyClients(createJSONPacket(c));
     }
     if (message.indexOf("t") == 1) {
       int c = message.charAt(0) - '1';
       max_thrust = message.substring(2).toInt();
-      Serial.println(getSliderValues(c));
-      notifyClients(getSliderValues(c));
+      Serial.println(createJSONPacket(c));
+      notifyClients(createJSONPacket(c));
     }
     if (message.indexOf("getValues") >= 0) {
-      notifyClients(getSliderValues(message.substring(9).toInt() - 1));
+      notifyClients(createJSONPacket(message.substring(9).toInt() - 1));
     }
   }
+  Serial.print("End: ");
   Serial.println(millis());
 }
+
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
@@ -131,7 +119,6 @@ void initWebSocket() {
   server.addHandler(&ws);
 }
 
-
 void setup() {
   Serial.begin(115200);
   initFS();
@@ -152,6 +139,5 @@ void setup() {
 }
 
 void loop() {
-
   ws.cleanupClients();
 }

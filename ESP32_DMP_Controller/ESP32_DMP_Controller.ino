@@ -1,67 +1,69 @@
-#include <ESP32Servo.h>       //for motor
-#include "I2Cdev.h"      //for IMU
+#include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps_V6_12.h"
+#include <ESP32Servo.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include "SPIFFS.h"
 #include <Arduino_JSON.h>
-#include <Arduino.h>
-
-
-// Replace with your network credentials
-const char* ssid = "Galaxy M52 5G";
-const char* password = "euvq9457";
-
-// Create AsyncWebServer object on port 80
-AsyncWebServer server(80);
-// Create a WebSocket object
-
-// Set your Static IP address
-IPAddress local_IP(192, 168, 1, 184);
-// Set your Gateway IP address
-IPAddress gateway(192, 168, 1, 1);
-
-IPAddress subnet(255, 255, 0, 0);
-IPAddress primaryDNS(8, 8, 8, 8);   //optional
-IPAddress secondaryDNS(8, 8, 4, 4); //optional
-
-AsyncWebSocket ws("/ws");
-
-String message = "";
-float sliderValues[3][3] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-int thrust = 1000;
-
-//Json Variable to Hold Slider Values
-JSONVar sliderValuesJSON;
+#include <SPIMemory.h>
 
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
     #include "Wire.h"
 #endif
 
-//ESC parameters
-Servo motor1;
-Servo motor2; 
-Servo motor3;
-Servo motor4;
+// SERVER PARAMS //
 
-#define MAX_SIGNAL 2000
-#define MIN_SIGNAL 1000
+const char* ssid = "Galaxy M52 5G";
+const char* password = "euvq9457";
+
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+
+IPAddress local_IP(192, 168, 98, 101);
+IPAddress gateway(192, 168, 1, 1);
+
+IPAddress subnet(255, 255, 0, 0);
+
+String message = "";
+JSONVar sliderValuesJSON;
+
+// FLASH PARAMS
+
+SPIFlash flash(SS, &SPI);
+uint32_t memAddr;
+
+// TUNING PARAMS //
+
+float control_coeff[3][3] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+int min_thrust = 1000;
+int max_thrust = 1500;
+int err_sat = 2000;
+
+// FLIGHT PARAMS
+
+int thrust;
+float P1, P2, P3, P4;
+int delta[3];
+int err[3] = {0, 0, 0};
+int cumm_err[3] = {0, 0, 0};
+
+// ESC PARAMS //
+
 #define MOTOR_PIN1 15
 #define MOTOR_PIN2 2
 #define MOTOR_PIN3 4
 #define MOTOR_PIN4 5
 
-// int thrust;   //take this value as input from radio
-float P1, P2, P3, P4;
+Servo motor1;
+Servo motor2; 
+Servo motor3;
+Servo motor4;
 
-float K_P[3] = {3, 3, 1};
-float K_I[3] = {0.0, 0.0, 0.0};
-int sat = 1600;
-
-int err[3];
+// IMU PARAMS
 
 MPU6050 mpu;
+
 // MPU control/status vars
 bool dmpReady = false;  // set true if DMP init was successful
 uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
@@ -79,15 +81,6 @@ VectorFloat gravity;    // [x, y, z]            gravity vector
 float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
-String getSliderValues(int ind){
-  sliderValuesJSON["sliderValue1"] = String(sliderValues[ind][0]);
-  sliderValuesJSON["sliderValue2"] = String(sliderValues[ind][1]);
-  sliderValuesJSON["sliderValue3"] = String(sliderValues[ind][2]);
-  sliderValuesJSON["thrustSliderValue"] = String(thrust);
-
-  String jsonString = JSON.stringify(sliderValuesJSON);
-  return jsonString;
-}
 
 // Initialize SPIFFS
 void initFS() {
@@ -102,14 +95,14 @@ void initFS() {
 // Initialize WiFi
 void initWiFi() {
   WiFi.mode(WIFI_STA);
-//  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
-//    Serial.println("STA Failed to configure");
-//  }  
+  if (!WiFi.config(local_IP, gateway, subnet)) {
+    Serial.println("STA Failed to configure");
+  }  
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi ..");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print('.');
-    delay(1000);
+    delay(500);
   }
   Serial.println(WiFi.localIP());
 }
@@ -118,35 +111,49 @@ void notifyClients(String sliderValues) {
   ws.textAll(sliderValues);
 }
 
+String createJSONPacket(int ind){
+  sliderValuesJSON["sliderKp"] = String(control_coeff[ind][0]);
+  sliderValuesJSON["sliderKi"] = String(control_coeff[ind][1]);
+  sliderValuesJSON["sliderKd"] = String(control_coeff[ind][2]);
+  sliderValuesJSON["sliderMaxThrust"] = String(max_thrust);
+  sliderValuesJSON["sliderThrust"] = String(thrust);
+
+  String jsonString = JSON.stringify(sliderValuesJSON);
+  return jsonString;
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   // Serial.println(millis());
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
     data[len] = 0;
     message = (char*)data;
-    Serial.println(message);
-    if (message.indexOf("c") == 1 && message.indexOf("s") == 3) {
-      int c = message.charAt(0) - '1';
-      int s = message.charAt(2) - '1';
-      Serial.println(String(c)+"/"+String(s));
-      sliderValues[c][s] = message.substring(4).toFloat();
-      Serial.println(getSliderValues(c));
-      notifyClients(getSliderValues(c));
+    // Serial.println(message);
+    if (message.indexOf("stop") == 0) {
+      thrust = 0;
+      setMotorSpeed();
     }
-    if (message.indexOf("t") == 1) {
-      int c = message.charAt(0) - '1';
-      thrust = message.substring(2).toInt();
-      Serial.println(getSliderValues(c));
-      notifyClients(getSliderValues(c));
-      updateMotorSpeed(thrust);
+    else if (message.indexOf("update") == 0) {
+      int c = message.charAt(9) - '1';
+      int s = message.charAt(12) - '1';
+      float v = message.substring(4).toFloat();
+      if (s <= 2)
+        control_coeff[c][s] = v;
+      else if (s == 3)
+        max_thrust = v;
+      else if (s == 4) {
+        thrust = v;
+        setMotorSpeed();
+      }
+      notifyClients(createJSONPacket(c));
     }
-    if (message.indexOf("getValues") >= 0) {
-      notifyClients(getSliderValues(message.substring(9).toInt() - 1));
+    else if (message.indexOf("getValues") == 0) {
+      notifyClients(createJSONPacket(message.charAt(12) - '1'));
     }
   }
   // Serial.println(millis());
-  
 }
+
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
     case WS_EVT_CONNECT:
@@ -169,47 +176,110 @@ void initWebSocket() {
   server.addHandler(&ws);
 }
 
-void updateMotorSpeed(int thrust) {
-      P1 = 1000 + thrust/4;
-      P2 = 1000 + thrust/4;
-      P3 = 1000 + thrust/4;
-      P4 = 1000 + thrust/4;
-      motor1.writeMicroseconds(P1);
-      motor2.writeMicroseconds(P2);
-      motor3.writeMicroseconds(P3);
-      motor4.writeMicroseconds(P4);
-      err[0] = 0; err[1] = 0; err[2] = 0; 
+void setMotorSpeed() {
+  if (thrust > max_thrust)
+    thrust = max_thrust;
+  P1 = thrust;
+  P2 = thrust;
+  P3 = thrust;
+  P4 = thrust;
+  motor1.writeMicroseconds(P1);
+  motor2.writeMicroseconds(P2);
+  motor3.writeMicroseconds(P3);
+  motor4.writeMicroseconds(P4);
+  err[0] = 0; err[1] = 0; err[2] = 0; 
+  cumm_err[0] = 0; cumm_err[1] = 0; cumm_err[2] = 0; 
+}
+
+void updateMotorSpeed() {
+  int new_err[3] = {int(ypr[0] * 180/M_PI), int(ypr[1] * 180/M_PI), int(ypr[2] * 180/M_PI)};
+
+  cumm_err[0] += new_err[0];
+  cumm_err[1] += new_err[1];
+  cumm_err[2] += new_err[2];
+
+  if (cumm_err[0] > err_sat || cumm_err[0] < -err_sat)
+    cumm_err[0] = 0;
+  if (cumm_err[1] > err_sat || cumm_err[1] < -err_sat)
+    cumm_err[1] = 0;
+  if (cumm_err[2] > err_sat || cumm_err[2] < -err_sat)
+    cumm_err[2] = 0;
+
+  delta[0] = new_err[0] * control_coeff[0][0] + cumm_err[0] * control_coeff[0][1] + (new_err[0] - err[0]) * control_coeff[0][2];
+  delta[1] = new_err[1] * control_coeff[1][0] + cumm_err[1] * control_coeff[1][1] + (new_err[1] - err[1]) * control_coeff[1][2];
+  delta[2] = new_err[2] * control_coeff[2][0] + cumm_err[2] * control_coeff[2][1] + (new_err[2] - err[2]) * control_coeff[2][2];
+  // delta[0] = 0;
+  // delta[1] = 0;
+  // delta[2] = 0;
+
+  err[0] = new_err[0];
+  err[1] = new_err[1];
+  err[2] = new_err[2];
+
+  P1 = thrust - delta[0] + delta[1] - delta[2];
+  P2 = thrust + delta[0] - delta[1] - delta[2];
+  P3 = thrust - delta[0] - delta[1] + delta[2];
+  P4 = thrust + delta[0] + delta[1] + delta[2];
+
+  if (P1 > max_thrust)
+    P1 = max_thrust;
+  if (P1 < min_thrust)
+    P1 = min_thrust;
+
+  if (P2 > max_thrust)
+    P2 = max_thrust;
+  if (P2 < min_thrust)
+    P2 = min_thrust;
+
+  if (P3 > max_thrust)
+    P3 = max_thrust;
+  if (P3 < min_thrust)
+    P3 = min_thrust;
+
+  if (P4 > max_thrust)
+    P4 = max_thrust;
+  if (P4 < min_thrust)
+    P4 = min_thrust;
+
+  motor1.writeMicroseconds(P1);
+  motor2.writeMicroseconds(P2);
+  motor3.writeMicroseconds(P3);
+  motor4.writeMicroseconds(P4);
 }
 
 void setup() {
-  Serial.begin(115200); // initialize serial communication
+  Serial.begin(115200); // Initialize serial communication
+
   initFS();
   initWiFi();
   initWebSocket();
+
   // Web Server Root URL
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SPIFFS, "/index.html", "text/html");
   });
-  
   server.serveStatic("/", SPIFFS, "/");
 
   // Start server
   server.begin();
 
+  // Start flash memory
+  // flash.begin();
+
+  // Serial.print(F("Total capacity: "));
+  // Serial.println(flash.getCapacity());
+
+  // Initiate motors
   motor1.attach(MOTOR_PIN1);
   motor2.attach(MOTOR_PIN2);
   motor3.attach(MOTOR_PIN3);
   motor4.attach(MOTOR_PIN4);
   
-  motor1.writeMicroseconds(MIN_SIGNAL);
-  motor2.writeMicroseconds(MIN_SIGNAL);
-  motor3.writeMicroseconds(MIN_SIGNAL);
-  motor4.writeMicroseconds(MIN_SIGNAL);
-
-  Serial.println("IMU initialisation...Hold steady");
+  thrust = min_thrust;
+  setMotorSpeed();
   delay(1000);
 
-  // join I2C bus (I2Cdev library doesn't do this automatically)
+  // Join I2C bus
   #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
       Wire.begin();
       Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
@@ -217,22 +287,20 @@ void setup() {
       Fastwire::setup(400, true);
   #endif
  
-  mpu.initialize();  // initialize device
+  Serial.println("IMU initialisation. Hold steady.");
+  mpu.initialize(); 
 
-  // load and configure the DMP
-  Serial.println(F("Initializing DMP..."));
+  Serial.println("Initializing DMP.");
   devStatus = mpu.dmpInitialize();
 
-  // make sure it worked (returns 0 if so)
   if (devStatus == 0) {
-      // Calibration Time: generate offsets and calibrate our MPU6050
+      Serial.println("Calibrating DMP.");
       mpu.CalibrateAccel(6);
       mpu.CalibrateGyro(6);
       mpu.PrintActiveOffsets();
-      // turn on the DMP, now that it's ready
-      Serial.println(F("Enabling DMP..."));
-      mpu.setDMPEnabled(true);
 
+      Serial.println("Enabling DMP.");
+      mpu.setDMPEnabled(true);
       dmpReady = true;
 
       // get expected DMP packet size for later comparison
@@ -246,124 +314,43 @@ void setup() {
       Serial.print(devStatus);
       Serial.println(F(")"));
   }
-
-  thrust = 0;
-  updateMotorSpeed(thrust);
 }
 
 void loop() {
-  Serial.print("Millis init: ");
-  Serial.println(millis());
-  // delay(200);
 
-  // if (Serial.available()) {
-  //   int tmp = Serial.parseInt();
-  //   Serial.parseInt();
-  //   {
-  //     if(tmp >= 60000) {
-  //       tmp = tmp % 10000;
-  //       sliderValues[2][1] = tmp/10;
-  //     }
-  //     else if(tmp >= 50000) {
-  //       tmp = tmp % 10000;
-  //       sliderValues[1][1] = tmp/10;
-  //     }
-  //     else if(tmp >= 40000) {
-  //       tmp = tmp % 10000;
-  //       sliderValues[0][1] = tmp/10;
-  //     }
-  //     else if(tmp >= 30000) {
-  //       tmp = tmp % 10000;
-  //       sliderValues[2][0] = tmp/10;
-  //     }
-  //     else if(tmp >= 20000) {
-  //       tmp = tmp % 10000;
-  //       sliderValues[1][0] = tmp/10;
-  //     }
-  //     else if(tmp >= 10000) {
-  //       tmp = tmp % 10000;
-  //       sliderValues[0][0] = tmp/10;
-  //     }
-  //     else {
-  //       if(tmp>2000) tmp=2000;
-  //       thrust = tmp;
-  //       updateMotorSpeed(thrust);
-  //     }
-  //   }
-  // }
-   // if programming failed, don't try to do anything
-    if (!dmpReady) return;
-    // read a packet from FIFO
-    if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
-      // display Euler angles in degrees
-      mpu.dmpGetQuaternion(&q, fifoBuffer);
-      mpu.dmpGetGravity(&gravity, &q);
-      mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-      Serial.print("ypr\t");
-      Serial.print(ypr[0] * 180/M_PI);
-      Serial.print("\t");
-      Serial.print(ypr[1] * 180/M_PI);
-      Serial.print("\t");
-      Serial.println(ypr[2] * 180/M_PI); 
-    }
+  int loop_start = millis();
 
-    err[0] += int(ypr[0] * 180/M_PI);
-    err[1] += int(ypr[1] * 180/M_PI);
-    err[2] += int(ypr[2] * 180/M_PI);
+  // Serial.print("Millis init: ");
+  // Serial.println(loop_start);
 
-    if (err[0] > 400)
-      err[0] = 400;
-    if (err[0] < -400)
-      err[0] = -400;
-    if (err[0] > 400)
-      err[1] = 400;
-    if (err[1] < -400)
-      err[1] = -400;
-    if (err[2] > 400)
-      err[2] = 400;
-    if (err[2] < -400)
-      err[2] = -400;
-
-    int delta[3];
-
-    delta[0] = int(ypr[0] * 180/M_PI) * sliderValues[0][0] + err[0] * sliderValues[0][1];
-    delta[1] = int(ypr[1] * 180/M_PI) * sliderValues[1][0] + err[1] * sliderValues[1][1];
-    delta[2] = int(ypr[2] * 180/M_PI) * sliderValues[2][0] + err[2] * sliderValues[2][1];
-    // delta[0] = 0;
-    // delta[1] = 0;
-    // delta[2] = 0;
-
-    P1 = 1000 + thrust/4 - delta[0] + delta[1] - delta[2];
-    if (P1 > sat)
-      P1 = sat;
-    P2 = 1000 + thrust/4 + delta[0] - delta[1] - delta[2];
-    if (P2 > sat)
-      P2 = sat;
-    P3 = 1000 + thrust/4 - delta[0] - delta[1] + delta[2];
-    if (P3 > sat)
-      P3 = sat;
-    P4 = 1000 + thrust/4 + delta[0] + delta[1] + delta[2];
-    if (P4 > sat)
-      P4 = sat;
-
-    motor1.writeMicroseconds(P1);
-    motor2.writeMicroseconds(P2);
-    motor3.writeMicroseconds(P3);
-    motor4.writeMicroseconds(P4);
-
-    Serial.print(delta[1]);
+  // Get the Latest packet 
+  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+    mpu.dmpGetEuler(euler, &q);
+    Serial.print("ypr\t");
+    Serial.print(ypr[0] * 180/M_PI);
     Serial.print("\t");
-    Serial.print(delta[2]);
+    Serial.print(ypr[1] * 180/M_PI);
     Serial.print("\t");
-    Serial.print(P1);
-    Serial.print("\t");
-    Serial.print(P2); 
-    Serial.print("\t");
-    Serial.print(P3); 
-    Serial.print("\t");
-    Serial.println(P4); 
-    Serial.println(""); 
-  Serial.print("Millis end: ");
-  Serial.println(millis());
-  delay(10);
+    Serial.println(ypr[2] * 180/M_PI); 
+  }
+
+  updateMotorSpeed();
+
+  Serial.print(P1);
+  Serial.print("\t");
+  Serial.print(P2); 
+  Serial.print("\t");
+  Serial.print(P3); 
+  Serial.print("\t");
+  Serial.println(P4); 
+  Serial.println(""); 
+  // Serial.print("Millis end: ");
+  // Serial.println(millis());
+
+  int loop_duration = millis() - loop_start;
+
+  delay(4 - loop_duration);
 }

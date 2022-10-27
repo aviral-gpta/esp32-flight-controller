@@ -9,7 +9,7 @@ function onload(event) {
 }
 
 function getValues(){
-    websocket.send("getValues"+configMenu);
+    websocket.send("getValues_c="+configMenu);
 }
 
 function initWebSocket() {
@@ -37,19 +37,15 @@ function changeConfigMenu(element) {
     getValues();
 }
 
-function updateSliderK(element) {
-    var sliderNumber = element.id.charAt(element.id.length-1);
-    var sliderValue = document.getElementById(element.id).value;
-    document.getElementById("sliderValue"+sliderNumber).innerHTML = sliderValue;
-    console.log(sliderValue);
-    websocket.send(configMenu+"c"+sliderNumber+"s"+sliderValue.toString());
+function onStop(element) {
+    websocket.send("stop");
 }
 
-function updateSliderT(element) {
+function updateSlider(element, sliderNumber) {
     var sliderValue = document.getElementById(element.id).value;
-    document.getElementById("thrustSliderValue").innerHTML = sliderValue;
+    document.getElementById(element.id + "Value").innerHTML = sliderValue;
     console.log(sliderValue);
-    websocket.send(configMenu+"t"+sliderValue.toString());
+    websocket.send("update_c="+configMenu+"s="+sliderNumber+"v="+sliderValue.toString());
 }
 
 function onMessage(event) {
@@ -59,7 +55,7 @@ function onMessage(event) {
 
     for (var i = 0; i < keys.length; i++){
         var key = keys[i];
-        document.getElementById(key).innerHTML = myObj[key];
-        document.getElementById("slider"+ (i+1).toString()).value = myObj[key];
+        document.getElementById(key + "Value").innerHTML = myObj[key];
+        document.getElementById(key).value = myObj[key];
     }
 }

@@ -26,33 +26,40 @@
             <div class="config-sliders">
                 <div class="slider-container">
                     <div class="slider-name">K_p : </div>
-                    <input type="range" onchange="updateSliderK(this)" id="slider1" min="0" max="1" step="0.01" value ="0" class="slider"></input>
-                    <div id="sliderValue1" class="slider-value"></div>
+                    <input type="range" onchange="updateSlider(this, 1)" id="sliderKp" min="0" max="10" step="0.1" value ="0" class="slider"></input>
+                    <div id="sliderKpValue" class="slider-value"></div>
                 </div>
                 <div class="slider-container">
                     <div class="slider-name">K_i : </div>
-                    <input type="range" onchange="updateSliderK(this)" id="slider2" min="0" max="1" step="0.01" value ="0" class="slider"></input>
-                    <div id="sliderValue2" class="slider-value"></div>
+                    <input type="range" onchange="updateSlider(this, 2)" id="sliderKi" min="0" max="1" step="0.01" value ="0" class="slider"></input>
+                    <div id="sliderKiValue" class="slider-value"></div>
                 </div>
                 <div class="slider-container">
                     <div class="slider-name">K_d : </div>
-                    <input type="range" onchange="updateSliderK(this)" id="slider3" min="0" max="1" step="0.01" value ="0" class="slider"></input>
-                    <div id="sliderValue3" class="slider-value"></div>
+                    <input type="range" onchange="updateSlider(this, 3)" id="sliderKd" min="0" max="1" step="0.01" value ="0" class="slider"></input>
+                    <div id="sliderKdValue" class="slider-value"></div>
                 </div>
             </div>
             <div class="thrust-slider-container">
                 <div class="slider-container">
                     <div class="slider-name">Max thrust : </div>
-                    <div id="thrustSliderValue" class="slider-value"></div>
+                    <div id="sliderMaxThrustValue" class="slider-value"></div>
                 </div>
-                <input type="range" onchange="updateSliderT(this)" id="slider4" min="0" max="2000" step="10" value ="0" class="slider"></input>
+                <input type="range" onchange="updateSlider(this, 4)" id="sliderMaxThrust" min="1000" max="2000" step="10" value ="1000" class="slider"></input>
             </div>
         </div>
         <div class="subheading">
             <p>IN_FLIGHT</p>
         </div>
         <div class="section">
-            <div onclick="StopButton(this)" class="stop-button" id="buttonS">STOP</div>
+            <div onclick="onStop(this)" class="stop-button" id="buttonS">STOP</div>
+            <div class="thrust-slider-container">
+                <div class="slider-container">
+                    <div class="slider-name">Max thrust : </div>
+                    <div id="sliderThrustValue" class="slider-value"></div>
+                </div>
+                <input type="range" onchange="updateSlider(this, 5)" id="sliderThrust" min="1000" max="2000" step="10" value ="1000" class="slider"></input>
+            </div>
         </div>
     </div>
     <script src="script.js"></script>
