@@ -35,13 +35,14 @@ uint32_t memAddr;
 
 // TUNING PARAMS //
 
-float control_coeff[3][3] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+float control_coeff[3][3] = {4.00, 0, 0.10, 0, 0, 0, 0, 0, 0};
 int min_thrust = 1000;
 int max_thrust = 1500;
-int err_sat = 2000;
+int err_sat = 10*3600*100;
 
 // FLIGHT PARAMS
 
+bool running = false;
 int thrust;
 float P1, P2, P3, P4;
 int delta[3];
@@ -50,10 +51,10 @@ int cumm_err[3] = {0, 0, 0};
 
 // ESC PARAMS //
 
-#define MOTOR_PIN1 15
-#define MOTOR_PIN2 2
-#define MOTOR_PIN3 4
-#define MOTOR_PIN4 5
+#define MOTOR_PIN1 5
+#define MOTOR_PIN2 18
+#define MOTOR_PIN3 19
+#define MOTOR_PIN4 23
 
 Servo motor1;
 Servo motor2; 
@@ -81,6 +82,9 @@ VectorFloat gravity;    // [x, y, z]            gravity vector
 float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
+// TIMING
+
+unsigned long loop_duration;
 
 // Initialize SPIFFS
 void initFS() {
@@ -117,9 +121,10 @@ String createJSONPacket(int ind){
   sliderValuesJSON["sliderKd"] = String(control_coeff[ind][2]);
   sliderValuesJSON["sliderMaxThrust"] = String(max_thrust);
   sliderValuesJSON["sliderThrust"] = String(thrust);
+  sliderValuesJSON["running"] = String(running);
 
   String jsonString = JSON.stringify(sliderValuesJSON);
-  Serial.println(jsonString);
+  // Serial.println(jsonString);
   return jsonString;
 }
 
@@ -131,8 +136,35 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
     message = (char*)data;
     // Serial.println(message);
     if (message.indexOf("stop") == 0) {
-      thrust = 0;
+      running = false;
+      thrust = 1000;
       setMotorSpeed();
+      notifyClients(createJSONPacket(message.charAt(7) - '1'));
+    }
+    else if (message.indexOf("start") == 0) {
+      running = true;
+      thrust = 1000;
+      setMotorSpeed();
+      notifyClients(createJSONPacket(message.charAt(8) - '1'));
+    }
+    else if (message.indexOf("res") == 0) {
+      mpu.setDMPEnabled(false);
+
+      Serial.println("Initializing DMP.");
+      mpu.dmpInitialize();
+
+      Serial.println("Calibrating DMP.");
+      mpu.CalibrateAccel(6);
+      mpu.CalibrateGyro(6);
+      mpu.PrintActiveOffsets();
+
+      Serial.println("Enabling DMP.");
+      mpu.setDMPEnabled(true);
+
+      running = false;
+      thrust = 1000;
+      setMotorSpeed();
+      notifyClients(createJSONPacket(message.charAt(6) - '1'));
     }
     else if (message.indexOf("update") == 0) {
       int c = message.charAt(9) - '1';
@@ -184,10 +216,12 @@ void setMotorSpeed() {
   P2 = thrust;
   P3 = thrust;
   P4 = thrust;
-  motor1.writeMicroseconds(P1);
-  motor2.writeMicroseconds(P2);
-  motor3.writeMicroseconds(P3);
-  motor4.writeMicroseconds(P4);
+  if (running) {
+    motor1.writeMicroseconds(P1);
+    motor2.writeMicroseconds(P2);
+    motor3.writeMicroseconds(P3);
+    motor4.writeMicroseconds(P4);
+  }
   err[0] = 0; err[1] = 0; err[2] = 0; 
   cumm_err[0] = 0; cumm_err[1] = 0; cumm_err[2] = 0; 
 }
@@ -207,8 +241,8 @@ void updateMotorSpeed() {
     cumm_err[2] = 0;
 
   delta[0] = new_err[0] * control_coeff[0][0] + cumm_err[0] * control_coeff[0][1] + (new_err[0] - err[0]) * control_coeff[0][2];
-  delta[1] = new_err[1] * control_coeff[1][0] + cumm_err[1] * control_coeff[1][1] + (new_err[1] - err[1]) * control_coeff[1][2];
-  delta[2] = new_err[2] * control_coeff[2][0] + cumm_err[2] * control_coeff[2][1] + (new_err[2] - err[2]) * control_coeff[2][2];
+  delta[1] = new_err[1] * control_coeff[2][0] + cumm_err[1] * control_coeff[2][1] + (new_err[1] - err[1]) * control_coeff[2][2];
+  delta[2] = new_err[2] * control_coeff[1][0] + cumm_err[2] * control_coeff[1][1] + (new_err[2] - err[2]) * control_coeff[1][2];
   // delta[0] = 0;
   // delta[1] = 0;
   // delta[2] = 0;
@@ -217,10 +251,10 @@ void updateMotorSpeed() {
   err[1] = new_err[1];
   err[2] = new_err[2];
 
-  P1 = thrust - delta[0] + delta[1] - delta[2];
-  P2 = thrust + delta[0] - delta[1] - delta[2];
-  P3 = thrust - delta[0] - delta[1] + delta[2];
-  P4 = thrust + delta[0] + delta[1] + delta[2];
+  P1 = thrust - delta[0] + delta[2] + delta[1];
+  P2 = thrust + delta[0] - delta[2] + delta[1];
+  P3 = thrust - delta[0] - delta[2] - delta[1];
+  P4 = thrust + delta[0] + delta[2] - delta[1];
 
   if (P1 > max_thrust)
     P1 = max_thrust;
@@ -242,10 +276,12 @@ void updateMotorSpeed() {
   if (P4 < min_thrust)
     P4 = min_thrust;
 
-  motor1.writeMicroseconds(P1);
-  motor2.writeMicroseconds(P2);
-  motor3.writeMicroseconds(P3);
-  motor4.writeMicroseconds(P4);
+  if (running) {
+    motor1.writeMicroseconds(P1);
+    motor2.writeMicroseconds(P2);
+    motor3.writeMicroseconds(P3);
+    motor4.writeMicroseconds(P4);
+  }
 }
 
 void setup() {
@@ -319,7 +355,7 @@ void setup() {
 
 void loop() {
 
-  int loop_start = millis();
+  unsigned long loop_start = micros();
 
   // Serial.print("Millis init: ");
   // Serial.println(loop_start);
@@ -351,7 +387,9 @@ void loop() {
   // Serial.print("Millis end: ");
   // Serial.println(millis());
 
-  int loop_duration = millis() - loop_start;
+  loop_duration = micros() - loop_start;
+  Serial.println(loop_duration);
+  if(loop_duration<9990) 
+    _delay_us(9990 - loop_duration);
 
-  delay(4 - loop_duration);
 }

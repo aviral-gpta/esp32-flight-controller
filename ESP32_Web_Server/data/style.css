@@ -62,6 +62,7 @@ h1 {
   max-width: 120px;
   background: #C7D9C9;
   border-radius: 5px;
+  cursor: pointer;
 }
 .config-sliders {
   padding: 20px;
@@ -109,11 +110,36 @@ h1 {
   background: #1DB954;
   cursor: pointer;
 }
+.stop-button.active {
+  background: #00ff5a;
+}
 .stop-button {
+  align-self: center;
   margin: 10px;
   padding: 5px;
-  max-width: 120px;
+  width: 120px;
   color: white;
   background: #FF6666;
   border-radius: 5px;
+  cursor: pointer;
+}
+.throttle {
+  -webkit-appearance: none;
+  overflow: hidden;
+  margin: 10px auto;
+  width: 90%;
+  height: 15px;
+  border-radius: 10px;
+  background: #c7d9c9;
+  outline: none;
+}
+.throttle::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #1DB954;
+  box-shadow: -1008px 0 0 1000px #1DB954;
+  cursor: pointer;
 }
