@@ -51,10 +51,10 @@ int cumm_err[3] = {0, 0, 0};
 
 // ESC PARAMS //
 
-#define MOTOR_PIN1 5
-#define MOTOR_PIN2 18
-#define MOTOR_PIN3 19
-#define MOTOR_PIN4 23
+#define MOTOR_PIN1 33
+#define MOTOR_PIN2 25
+#define MOTOR_PIN3 26
+#define MOTOR_PIN4 27
 
 Servo motor1;
 Servo motor2; 
@@ -62,6 +62,9 @@ Servo motor3;
 Servo motor4;
 
 // IMU PARAMS
+
+#define IMU_PWR 32
+#define IMU_LED 2
 
 MPU6050 mpu;
 
@@ -148,6 +151,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
       notifyClients(createJSONPacket(message.charAt(8) - '1'));
     }
     else if (message.indexOf("res") == 0) {
+      digitalWrite(IMU_LED, LOW);
       mpu.setDMPEnabled(false);
 
       Serial.println("Initializing DMP.");
@@ -160,6 +164,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
 
       Serial.println("Enabling DMP.");
       mpu.setDMPEnabled(true);
+      digitalWrite(IMU_LED, HIGH);
 
       running = false;
       thrust = 1000;
@@ -251,10 +256,10 @@ void updateMotorSpeed() {
   err[1] = new_err[1];
   err[2] = new_err[2];
 
-  P1 = thrust - delta[0] + delta[2] + delta[1];
-  P2 = thrust + delta[0] - delta[2] + delta[1];
-  P3 = thrust - delta[0] - delta[2] - delta[1];
-  P4 = thrust + delta[0] + delta[2] - delta[1];
+  P1 = thrust - delta[0] - delta[2] - delta[1];
+  P2 = thrust + delta[0] + delta[2] - delta[1];
+  P3 = thrust - delta[0] + delta[2] + delta[1];
+  P4 = thrust + delta[0] - delta[2] + delta[1];
 
   if (P1 > max_thrust)
     P1 = max_thrust;
@@ -323,7 +328,12 @@ void setup() {
   #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
       Fastwire::setup(400, true);
   #endif
- 
+
+  pinMode(IMU_PWR, OUTPUT);
+  pinMode(IMU_LED, OUTPUT);
+
+  digitalWrite(IMU_PWR, HIGH);
+
   Serial.println("IMU initialisation. Hold steady.");
   mpu.initialize(); 
 
@@ -342,6 +352,7 @@ void setup() {
 
       // get expected DMP packet size for later comparison
       packetSize = mpu.dmpGetFIFOPacketSize();
+      digitalWrite(IMU_LED, HIGH);
   } else {
       // ERROR!
       // 1 = initial memory load failed
